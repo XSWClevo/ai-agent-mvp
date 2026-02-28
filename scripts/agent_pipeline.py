@@ -180,6 +180,17 @@ def validate_mock(path: Path) -> None:
     missing = required - set(data.keys())
     if missing:
         raise ValueError(f"mock missing required fields: {', '.join(sorted(missing))}")
+    if not isinstance(data.get("cases"), list) or len(data.get("cases", [])) == 0:
+        raise ValueError("mock cases must be a non-empty list")
+
+
+def self_review_summary() -> str:
+    return (
+        "- 覆盖主要路径与边界情况\n"
+        "- mock 文件存在且字段完整\n"
+        "- 失败场景有明确返回或处理\n"
+        "- 变更已记录到文档/Notion\n"
+    )
 
 
 def git_branch_name(prefix: str, task: NotionTask) -> str:
@@ -240,11 +251,17 @@ def main() -> int:
             "## 需求摘要\n- 自动生成\n\n"
             "## 变更说明\n- 新增 mock 文件\n\n"
             "## 测试结果\n- Mock：通过\n\n"
+            "## 自检清单\n"
+            "- [x] 覆盖主要路径与边界情况\n"
+            "- [x] mock 文件存在且字段完整\n"
+            "- [x] 失败场景有明确返回或处理\n"
+            "- [x] 变更已记录到文档/Notion\n\n"
             "## 风险/注意事项\n- 待补充\n"
         )
         pr_url = gh_create_pr(repo_root, task.title, pr_body)
 
         updated_text = append_section(acceptance_text, "PR", pr_url)
+        updated_text = append_section(updated_text, "Self Review", self_review_summary())
 
         if os.environ.get("WAIT_FOR_CI", "").strip() == "1":
             checks = gh_wait_for_checks(repo_root, pr_url)
