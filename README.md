@@ -33,3 +33,8 @@ Live run:
 ```bash
 ./scripts/agent_pipeline.py
 ```
+
+Wait for CI checks:
+```bash
+WAIT_FOR_CI=1 ./scripts/agent_pipeline.py
+```

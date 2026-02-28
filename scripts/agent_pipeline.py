@@ -13,6 +13,7 @@ Env vars:
 - GITHUB_REPO (e.g. XSWClevo/ai-agent-mvp)
 - BRANCH_PREFIX (default: feature)
 - DRY_RUN (1 to skip git/gh actions)
+- WAIT_FOR_CI (1 to block until `gh pr checks` completes)
 """
 
 from __future__ import annotations
@@ -132,6 +133,14 @@ def build_spec(task: NotionTask) -> str:
         "- \n"
     )
 
+def build_section(title: str, body: str) -> str:
+    return f"## {title}\n{body.strip()}\n"
+
+def append_section(existing: str, title: str, body: str) -> str:
+    if not existing:
+        return build_section(title, body)
+    return existing.rstrip() + "\n\n---\n\n" + build_section(title, body)
+
 
 def update_notion_acceptance(cfg: Config, page_id: str, new_text: str, status: str) -> None:
     url = f"{NOTION_API}/pages/{page_id}"
@@ -165,6 +174,13 @@ def ensure_mock(task: NotionTask, repo_root: Path) -> Path:
     file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return file_path
 
+def validate_mock(path: Path) -> None:
+    required = {"task_id", "title", "description", "inputs", "outputs", "cases", "notes"}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    missing = required - set(data.keys())
+    if missing:
+        raise ValueError(f"mock missing required fields: {', '.join(sorted(missing))}")
+
 
 def git_branch_name(prefix: str, task: NotionTask) -> str:
     short_id = task.page_id.split("-")[0]
@@ -188,6 +204,11 @@ def gh_create_pr(repo_root: Path, title: str, body: str) -> str:
     ], cwd=repo_root)
     return output.splitlines()[-1].strip()
 
+def gh_wait_for_checks(repo_root: Path, pr_url: str) -> str:
+    # Blocks until checks complete and returns the summary text.
+    output = sh(["gh", "pr", "checks", pr_url, "--watch"], cwd=repo_root)
+    return output
+
 
 def main() -> int:
     cfg = load_config()
@@ -199,11 +220,12 @@ def main() -> int:
 
     for task in tasks:
         spec = build_spec(task)
-        acceptance_text = spec if not task.acceptance else f"{task.acceptance}\n\n---\n\n{spec}"
+        acceptance_text = append_section(task.acceptance, "Spec", spec)
         print(f"Updating Notion task: {task.title}")
         update_notion_acceptance(cfg, task.page_id, acceptance_text, status="进行中")
 
         mock_path = ensure_mock(task, repo_root)
+        validate_mock(mock_path)
         print(f"Mock file: {mock_path}")
 
         if cfg.dry_run:
@@ -222,8 +244,14 @@ def main() -> int:
         )
         pr_url = gh_create_pr(repo_root, task.title, pr_body)
 
-        updated_text = acceptance_text + f"\n\n---\n\nPR: {pr_url}\n"
-        update_notion_acceptance(cfg, task.page_id, updated_text, status="待测试")
+        updated_text = append_section(acceptance_text, "PR", pr_url)
+
+        if os.environ.get("WAIT_FOR_CI", "").strip() == "1":
+            checks = gh_wait_for_checks(repo_root, pr_url)
+            updated_text = append_section(updated_text, "Test Report", checks)
+            update_notion_acceptance(cfg, task.page_id, updated_text, status="待测试")
+        else:
+            update_notion_acceptance(cfg, task.page_id, updated_text, status="待测试")
         print(f"PR created: {pr_url}")
 
     return 0
